@@ -6,7 +6,7 @@ import os
 from argparse import ArgumentParser
 
 from pytorch_lightning import Trainer, seed_everything
-from pl_examples.models.lightning_template import LightningTemplateModel
+from training.lightning_wrapper import LightningModel
 
 seed_everything(234)
 
@@ -16,7 +16,16 @@ def main(args):
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
-    model = LightningTemplateModel(**vars(args))
+    model = LightningModel(**vars(args))
+
+    #Elle's notes - ex:
+    #model = model.from_pretrained(path)
+    # -- OR --
+    #model = model(config).init_weights()
+    #-- THEN --
+    """model = LightningModel(model=model,
+                            optimizer=optimizer,
+                            etc)"""
 
     # ------------------------
     # 2 INIT TRAINER
@@ -28,7 +37,8 @@ def main(args):
     # ------------------------
     trainer.fit(model)
 
-
+#Elle's note - I'm unsure if CLI will work with "Bring your own model". We could either build it on top of Llama or GPTnano or something,
+# or keep it hackable and general. Or both.
 def run_cli():
     # ------------------------
     # TRAINING ARGUMENTS
