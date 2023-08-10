@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 from torch import optim
+from typing import Dict, Any
 from torch.utils.data import DataLoader
 from torchvision.datasets import MNIST
 
@@ -43,13 +44,10 @@ class LightningTemplateModel(LightningModule):
                  lora_config: LoraConfig,
                  drop_prob: float = 0.2,
                  batch_size: int = 2,
-                 in_features: int = 28 * 28,
                  learning_rate: float = 0.001 * 8,
                  optimizer_name: str = 'adam',
                  data_root: str = './datasets',
-                 out_features: int = 10,
                  num_workers: int = 4,
-                 hidden_dim: int = 1000,
                  **kwargs
                  ):
 
@@ -60,12 +58,9 @@ class LightningTemplateModel(LightningModule):
         self.num_workers = num_workers
         self.drop_prob = drop_prob
         self.batch_size = batch_size
-        self.in_features = in_features
         self.learning_rate = learning_rate
         self.optimizer_name = optimizer_name
         self.data_root = data_root
-        self.out_features = out_features
-        self.hidden_dim = hidden_dim
         
         self.example_input_array = torch.zeros(2, 1, 28, 28)
 
@@ -166,11 +161,7 @@ class LightningTemplateModel(LightningModule):
         # parser.set_defaults(gradient_clip_val=5.0)
 
         # network params
-        parser.add_argument('--in_features', default=28 * 28, type=int)
-        parser.add_argument('--out_features', default=10, type=int)
         # use 500 for CPU, 50000 for GPU to see speed difference
-        parser.add_argument('--hidden_dim', default=50000, type=int)
-        parser.add_argument('--drop_prob', default=0.2, type=float)
         parser.add_argument('--learning_rate', default=0.001, type=float)
         parser.add_argument('--num_workers', default=4, type=int)
 
@@ -186,8 +177,10 @@ class LightningTemplateModel(LightningModule):
     # ---------------------
     # RELORA METHODS
     # ---------------------
-    def merge_and_reinit(self):
+    def merge_lora_weights(self):
         self.model.merge_and_unload()
+
+    def reinit_lora(self):
         self.model = get_peft_model(self.model, self.config)
 
     def reset_optimizer(self, optimizer):
@@ -203,4 +196,6 @@ class LightningTemplateModel(LightningModule):
                 param_state["exp_avg_sq"] = torch.zeros_like(p.data)
         #Of note, ReLoRA has two "settings", one just saves and loads the optimizer again, instead of setting all values to 0.
         return optimizer
-
+    
+    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        return super().on_save_checkpoint(checkpoint)
