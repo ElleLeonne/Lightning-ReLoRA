@@ -1,7 +1,3 @@
-"""
-Basic lightning module wrapper. Training loop features go here.
-Lifted from -> https://github.com/ibeltagy/pytorch-lightning/blob/master/pl_examples/models/lightning_template.py
-"""
 import os
 from argparse import ArgumentParser
 
@@ -17,8 +13,12 @@ from torchvision.datasets import MNIST
 from pytorch_lightning import _logger as log
 from pytorch_lightning.core import LightningModule
 from peft import LoraModel, LoraConfig, get_peft_model
+from accelerate import Accelerator
 
-class LightningTemplateModel(LightningModule):
+#Easy lookup table for llama's LoRA modules
+lora_modules = {"basic": ["q_proj", "v_proj"], "full": ["q_proj", "k_proj", "v_proj", "o_proj", "wte", "lm_head"], None: ""}
+
+class ReloraModule(LightningModule):
     """
     Sample model to show how to define a template.
 
@@ -41,20 +41,21 @@ class LightningTemplateModel(LightningModule):
 
     def __init__(self,
                  model: nn.Module,
-                 lora_config: LoraConfig,
+                 lora_config: LoraConfig = None,
+                 accelerator: Accelerator = Accelerator(),
                  drop_prob: float = 0.2,
                  batch_size: int = 2,
                  learning_rate: float = 0.001 * 8,
                  optimizer_name: str = 'adam',
                  data_root: str = './datasets',
                  num_workers: int = 4,
-                 **kwargs
-                 ):
-
-        # init superclass
+                 **kwargs):
+        
         super().__init__()
         self.model = model,
         self.config = lora_config,
+        self.accelerator = accelerator #Would be good to find a way to implement this, too.
+
         self.num_workers = num_workers
         self.drop_prob = drop_prob
         self.batch_size = batch_size
@@ -64,13 +65,14 @@ class LightningTemplateModel(LightningModule):
         
         self.example_input_array = torch.zeros(2, 1, 28, 28)
 
+    def setup(self, stage: str):
+        """Called before trainer.fit() and trainer.eval()"""
+        if stage == 'fit' and self.lora_config is not None:
+            self.init_lora()
+            #May need to move prepare_model_for_8bit_training here, too.
+
     def forward(self, x):
-        """
-        No special modification required for Lightning, define it as you normally would
-        in the `nn.Module` in vanilla PyTorch.
-        """
-        x = self.model(x)
-        return x
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
         """
@@ -160,8 +162,13 @@ class LightningTemplateModel(LightningModule):
         # param overwrites
         # parser.set_defaults(gradient_clip_val=5.0)
 
-        # network params
-        # use 500 for CPU, 50000 for GPU to see speed difference
+        # LoRA params
+        parser.add_argument('--lora_r', default=8, type=int) #LoRA rank, How deep our LoRA layers are
+        parser.add_argument('--lora_alpha', default=16, type=int) #The amount of compression used, aim for roughly double the rank
+        parser.add_argument('--lora_dropout', default=0.05, type=float)
+        parser.add_argument('--lora_modules', default="basic", choices=['basic', 'full'])
+
+
         parser.add_argument('--learning_rate', default=0.001, type=float)
         parser.add_argument('--num_workers', default=4, type=int)
 
@@ -177,16 +184,21 @@ class LightningTemplateModel(LightningModule):
     # ---------------------
     # RELORA METHODS
     # ---------------------
+    def set_lora_config(self, **kwargs):
+        """Basic method to set LoRA config from outside instance initiation."""
+        self.config = LoraConfig(**kwargs)
+        return self.config
+    
     def merge_lora_weights(self):
         self.model.merge_and_unload()
 
-    def reinit_lora(self):
+    def init_lora(self):
         self.model = get_peft_model(self.model, self.config)
 
     def reset_optimizer(self, optimizer):
         """This was part of the trainer originally, references may need to be changed, since we now only has have
         access to the wrapper and the initial training args"""
-        self.fabric.logger.info("Resetting optimizer states to zeros")
+        self.logger.info("Resetting optimizer states to zeros")
 
         #This assumes that optimizer is not wrapped by accelerator
         for group in optimizer.param_groups:
@@ -198,4 +210,18 @@ class LightningTemplateModel(LightningModule):
         return optimizer
     
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
-        return super().on_save_checkpoint(checkpoint)
+        """Handles checkpoint logic"""
+
+        #Merging and reinitializing LoRA
+        self.merge_lora_weights()
+        checkpoint['state_dict'] = self.model.state_dict() #We want to make sure we're not saving the LoRA state dict
+        if self.accelerator is not None: #Unwrap optimizer
+            self.optimizer = self.optimizer.optimizer
+        self.reset_optimizer(self.optimizer)
+        self.init_lora()
+        if self.accelerator is not None:
+            self.model = self.accelerator.prepare_model(self.model)
+            self.optimizer = self.accelerator.prepare_optimizer(self.optimizer)
+
+        output = super().on_save_checkpoint(checkpoint)
+        return output
