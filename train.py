@@ -4,9 +4,11 @@ Lifted from -> https://github.com/ibeltagy/pytorch-lightning/blob/master/pl_exam
 """
 import os
 from argparse import ArgumentParser
+from transformers import LlamaForCausalLM
+from peft import LoraConfig
 
 from pytorch_lightning import Trainer, seed_everything
-from training.lightning_wrapper import LightningModel
+from training.lightning_wrapper import ReloraModule, lora_modules
 
 seed_everything(234)
 
@@ -16,7 +18,11 @@ def main(args):
     # ------------------------
     # 1 INIT LIGHTNING MODEL
     # ------------------------
-    model = LightningModel(**vars(args))
+    model = LlamaForCausalLM.from_pretrained("meta-llama/Llama-2-7b",
+                                             load_in_8bit=True,)
+    model = ReloraModule(model=model,
+                         lora_config=LoraConfig(**vars(args)),
+                        **vars(args))
 
     #Elle's notes - ex:
     #model = model.from_pretrained(path)
@@ -27,14 +33,8 @@ def main(args):
                             optimizer=optimizer,
                             etc)"""
 
-    # ------------------------
-    # 2 INIT TRAINER
-    # ------------------------
+    # Begin training
     trainer = Trainer.from_argparse_args(args)
-
-    # ------------------------
-    # 3 START TRAINING
-    # ------------------------
     trainer.fit(model)
 
 #Elle's note - I'm unsure if CLI will work with "Bring your own model". We could either build it on top of Llama or GPTnano or something,
@@ -47,11 +47,15 @@ def run_cli():
     root_dir = os.path.dirname(os.path.realpath(__file__))
     parent_parser = ArgumentParser(add_help=False)
 
-    # each LightningModule defines arguments relevant to it
-    parser = LightningTemplateModel.add_model_specific_args(parent_parser, root_dir)
+    # Establish your custom CLI variables in the module itself
+    parser = ReloraModule.add_model_specific_args(parent_parser, root_dir)
     parser = Trainer.add_argparse_args(parser)
     parser.set_defaults(gpus=2)
+    parser.set_defaults()
+
+    # Initializing args
     args = parser.parse_args()
+    args.lora_target_modules = lora_modules[args.lora_modules] #Set lora_modules from our lookup dictionary
 
     # ---------------------
     # RUN TRAINING
