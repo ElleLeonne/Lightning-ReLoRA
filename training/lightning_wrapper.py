@@ -4,11 +4,9 @@ from argparse import ArgumentParser
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms as transforms
 from torch import optim
 from typing import Dict, Any
 from torch.utils.data import DataLoader
-from torchvision.datasets import MNIST
 
 from pytorch_lightning import _logger as log
 from pytorch_lightning.core import LightningModule
@@ -43,27 +41,34 @@ class ReloraModule(LightningModule):
                  model: nn.Module,
                  lora_config: LoraConfig = None,
                  accelerator: Accelerator = Accelerator(),
+                 train_dataset: Any = None,
+                 eval_dataset: Any = None,
+                 test_dataset: Any = None,
                  drop_prob: float = 0.2,
                  batch_size: int = 2,
                  learning_rate: float = 0.001 * 8,
-                 optimizer_name: str = 'adam',
-                 data_root: str = './datasets',
+                 optimizer_name: str = 'adamw',
                  num_workers: int = 4,
                  **kwargs):
         
         super().__init__()
+        # Training and optimization
         self.model = model,
         self.config = lora_config,
         self.accelerator = accelerator #Would be good to find a way to implement this, too.
+        self.logger = log
 
+        # Datasets
+        self.train_set = train_dataset
+        self.eval_set = eval_dataset
+        self.test_set = test_dataset
+
+        # Misc Arguements
         self.num_workers = num_workers
         self.drop_prob = drop_prob
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.optimizer_name = optimizer_name
-        self.data_root = data_root
-        
-        self.example_input_array = torch.zeros(2, 1, 28, 28)
 
     def setup(self, stage: str):
         """Called before trainer.fit() and trainer.eval()"""
@@ -135,28 +140,22 @@ class ReloraModule(LightningModule):
         return [optimizer], [scheduler]
 
     def prepare_data(self):
-        MNIST(self.data_root, train=True, download=True, transform=transforms.ToTensor())
-        MNIST(self.data_root, train=False, download=True, transform=transforms.ToTensor())
-
-    def setup(self, stage):
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (1.0,))])
-        self.mnist_train = MNIST(self.data_root, train=True, download=False, transform=transform)
-        self.mnist_test = MNIST(self.data_root, train=False, download=False, transform=transform)
+        """Preprocessing"""
+        pass
 
     def train_dataloader(self):
-        return DataLoader(self.mnist_train, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.train_set, batch_size=self.batch_size, num_workers=self.num_workers)
 
     def val_dataloader(self):
-        return DataLoader(self.mnist_test, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.eval_set, batch_size=self.batch_size, num_workers=self.num_workers)
 
     def test_dataloader(self):
-        return DataLoader(self.mnist_test, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.test_set, batch_size=self.batch_size, num_workers=self.num_workers)
 
+    #Lightning 2.x has a LightningCLI object now, will need to investigate.
     @staticmethod
     def add_model_specific_args(parent_parser, root_dir):  # pragma: no-cover
-        """
-        Define parameters that only apply to this model
-        """
+        """ Define parameters that only apply to this model """
         parser = ArgumentParser(parents=[parent_parser])
 
         # param overwrites
@@ -171,9 +170,6 @@ class ReloraModule(LightningModule):
 
         parser.add_argument('--learning_rate', default=0.001, type=float)
         parser.add_argument('--num_workers', default=4, type=int)
-
-        # data
-        parser.add_argument('--data_root', default=os.path.join(root_dir, 'mnist'), type=str)
 
         # training params (opt)
         parser.add_argument('--epochs', default=20, type=int)
