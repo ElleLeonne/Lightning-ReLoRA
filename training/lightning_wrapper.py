@@ -7,8 +7,6 @@ import torch.nn.functional as F
 from torch import optim
 from typing import Dict, Any
 from torch.utils.data import DataLoader
-
-from pytorch_lightning import _logger as log
 from pytorch_lightning.core import LightningModule
 from peft import LoraModel, LoraConfig, get_peft_model
 from accelerate import Accelerator
@@ -55,8 +53,8 @@ class ReloraModule(LightningModule):
         # Training and optimization
         self.model = model,
         self.config = lora_config,
-        self.accelerator = accelerator #Would be good to find a way to implement this, too.
-        self.logger = log
+        self.accelerator = accelerator
+        #The trainer carries its own accelerator, but we don't have access to it.
 
         # Datasets
         self.train_set = train_dataset
@@ -80,36 +78,40 @@ class ReloraModule(LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        """
-        Lightning calls this inside the training loop with the data from the training dataloader
-        passed in as `batch`.
-        """
-        # forward pass
-        x, y = batch
-        y_hat = self(x)
-        loss = F.cross_entropy(y_hat, y)
-        tensorboard_logs = {'train_loss': loss}
-        return {'loss': loss, 'log': tensorboard_logs}
+        """ Lightning calls this inside the training loop with the data from the training dataloader passed in as `batch`. """
+
+        input_ids, labels = batch
+        logits = self(input_ids)
+
+        """ # For classification tasks, you'll want to use an accuracy metric
+        predictions = torch.argmax(logits[-1, :), dim=-1)
+        acc = self.accuracy(preds, labels)
+        self.log("train_accuracy", acc, on_step=True, on_epoch=False, prog_bar=True)
+        loss = F.cross_entropy(predictions, labels)"""
+        
+        loss = F.cross_entropy(logits, labels)
+        self.log("train_loss", loss, batch_size=1, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         """
         Lightning calls this inside the validation loop with the data from the validation dataloader
         passed in as `batch`.
         """
-        x, y = batch
-        y_hat = self(x)
-        val_loss = F.cross_entropy(y_hat, y)
-        labels_hat = torch.argmax(y_hat, dim=1)
-        n_correct_pred = torch.sum(y == labels_hat).item()
-        return {'val_loss': val_loss, "n_correct_pred": n_correct_pred, "n_pred": len(x)}
+        input_ids, labels = batch
+        logits = self(input_ids)
+        val_loss = F.cross_entropy(logits, labels)
+        preds = torch.argmax(logits, dim=1)
+        n_correct_preds = torch.sum(y == preditions).item()
+        return {'val_loss': val_loss, "n_correct_pred": n_correct_preds, "n_pred": len(x)}
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        test_loss = F.cross_entropy(y_hat, y)
-        labels_hat = torch.argmax(y_hat, dim=1)
-        n_correct_pred = torch.sum(y == labels_hat).item()
-        return {'test_loss': test_loss, "n_correct_pred": n_correct_pred, "n_pred": len(x)}
+        input_ids, labels = batch
+        logits = self(input_ids)
+        test_loss = F.cross_entropy(logits, labels)
+        preds = torch.argmax(logits, dim=1)
+        n_correct_preds = torch.sum(y == preds).item()
+        return {'test_loss': test_loss, "n_correct_pred": n_correct_preds, "n_pred": len(x)}
 
     def validation_epoch_end(self, outputs):
         """
@@ -118,8 +120,9 @@ class ReloraModule(LightningModule):
         """
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
         val_acc = sum([x['n_correct_pred'] for x in outputs]) / sum(x['n_pred'] for x in outputs)
-        tensorboard_logs = {'val_loss': avg_loss, 'val_acc': val_acc}
-        return {'val_loss': avg_loss, 'log': tensorboard_logs}
+        self.log('val_loss', avg_loss)
+        self.log('val_acc', val_acc)
+        return {'val_loss': avg_loss}
 
     def test_epoch_end(self, outputs):
         avg_loss = torch.stack([x['test_loss'] for x in outputs]).mean()
@@ -194,7 +197,7 @@ class ReloraModule(LightningModule):
     def reset_optimizer(self, optimizer):
         """This was part of the trainer originally, references may need to be changed, since we now only has have
         access to the wrapper and the initial training args"""
-        self.logger.info("Resetting optimizer states to zeros")
+        self.log.info("Resetting optimizer states to zeros")
 
         #This assumes that optimizer is not wrapped by accelerator
         for group in optimizer.param_groups:
