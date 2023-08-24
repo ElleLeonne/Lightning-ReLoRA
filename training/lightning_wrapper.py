@@ -4,13 +4,9 @@ from argparse import ArgumentParser
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms as transforms
 from torch import optim
 from typing import Dict, Any
 from torch.utils.data import DataLoader
-from torchvision.datasets import MNIST
-
-from pytorch_lightning import _logger as log
 from pytorch_lightning.core import LightningModule
 from peft import LoraModel, LoraConfig, get_peft_model
 from accelerate import Accelerator
@@ -43,27 +39,34 @@ class ReloraModule(LightningModule):
                  model: nn.Module,
                  lora_config: LoraConfig = None,
                  accelerator: Accelerator = Accelerator(),
+                 train_dataset: Any = None,
+                 eval_dataset: Any = None,
+                 test_dataset: Any = None,
                  drop_prob: float = 0.2,
                  batch_size: int = 2,
                  learning_rate: float = 0.001 * 8,
-                 optimizer_name: str = 'adam',
-                 data_root: str = './datasets',
+                 optimizer_name: str = 'adamw',
                  num_workers: int = 4,
                  **kwargs):
         
         super().__init__()
+        # Training and optimization
         self.model = model,
         self.config = lora_config,
-        self.accelerator = accelerator #Would be good to find a way to implement this, too.
+        self.accelerator = accelerator
+        #The trainer carries its own accelerator, but we don't have access to it.
 
+        # Datasets
+        self.train_set = train_dataset
+        self.eval_set = eval_dataset
+        self.test_set = test_dataset
+
+        # Misc Arguements
         self.num_workers = num_workers
         self.drop_prob = drop_prob
         self.batch_size = batch_size
         self.learning_rate = learning_rate
         self.optimizer_name = optimizer_name
-        self.data_root = data_root
-        
-        self.example_input_array = torch.zeros(2, 1, 28, 28)
 
     def setup(self, stage: str):
         """Called before trainer.fit() and trainer.eval()"""
@@ -75,36 +78,40 @@ class ReloraModule(LightningModule):
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        """
-        Lightning calls this inside the training loop with the data from the training dataloader
-        passed in as `batch`.
-        """
-        # forward pass
-        x, y = batch
-        y_hat = self(x)
-        loss = F.cross_entropy(y_hat, y)
-        tensorboard_logs = {'train_loss': loss}
-        return {'loss': loss, 'log': tensorboard_logs}
+        """ Lightning calls this inside the training loop with the data from the training dataloader passed in as `batch`. """
+
+        input_ids, labels = batch
+        logits = self(input_ids)
+
+        """ # For classification tasks, you'll want to use an accuracy metric
+        predictions = torch.argmax(logits[-1, :), dim=-1)
+        acc = self.accuracy(preds, labels)
+        self.log("train_accuracy", acc, on_step=True, on_epoch=False, prog_bar=True)
+        loss = F.cross_entropy(predictions, labels)"""
+        
+        loss = F.cross_entropy(logits, labels)
+        self.log("train_loss", loss, batch_size=1, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
 
     def validation_step(self, batch, batch_idx):
         """
         Lightning calls this inside the validation loop with the data from the validation dataloader
         passed in as `batch`.
         """
-        x, y = batch
-        y_hat = self(x)
-        val_loss = F.cross_entropy(y_hat, y)
-        labels_hat = torch.argmax(y_hat, dim=1)
-        n_correct_pred = torch.sum(y == labels_hat).item()
-        return {'val_loss': val_loss, "n_correct_pred": n_correct_pred, "n_pred": len(x)}
+        input_ids, labels = batch
+        logits = self(input_ids)
+        val_loss = F.cross_entropy(logits, labels)
+        preds = torch.argmax(logits, dim=1)
+        n_correct_preds = torch.sum(y == preditions).item()
+        return {'val_loss': val_loss, "n_correct_pred": n_correct_preds, "n_pred": len(x)}
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self(x)
-        test_loss = F.cross_entropy(y_hat, y)
-        labels_hat = torch.argmax(y_hat, dim=1)
-        n_correct_pred = torch.sum(y == labels_hat).item()
-        return {'test_loss': test_loss, "n_correct_pred": n_correct_pred, "n_pred": len(x)}
+        input_ids, labels = batch
+        logits = self(input_ids)
+        test_loss = F.cross_entropy(logits, labels)
+        preds = torch.argmax(logits, dim=1)
+        n_correct_preds = torch.sum(y == preds).item()
+        return {'test_loss': test_loss, "n_correct_pred": n_correct_preds, "n_pred": len(x)}
 
     def validation_epoch_end(self, outputs):
         """
@@ -113,8 +120,9 @@ class ReloraModule(LightningModule):
         """
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
         val_acc = sum([x['n_correct_pred'] for x in outputs]) / sum(x['n_pred'] for x in outputs)
-        tensorboard_logs = {'val_loss': avg_loss, 'val_acc': val_acc}
-        return {'val_loss': avg_loss, 'log': tensorboard_logs}
+        self.log('val_loss', avg_loss)
+        self.log('val_acc', val_acc)
+        return {'val_loss': avg_loss}
 
     def test_epoch_end(self, outputs):
         avg_loss = torch.stack([x['test_loss'] for x in outputs]).mean()
@@ -135,28 +143,22 @@ class ReloraModule(LightningModule):
         return [optimizer], [scheduler]
 
     def prepare_data(self):
-        MNIST(self.data_root, train=True, download=True, transform=transforms.ToTensor())
-        MNIST(self.data_root, train=False, download=True, transform=transforms.ToTensor())
-
-    def setup(self, stage):
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (1.0,))])
-        self.mnist_train = MNIST(self.data_root, train=True, download=False, transform=transform)
-        self.mnist_test = MNIST(self.data_root, train=False, download=False, transform=transform)
+        """Preprocessing"""
+        pass
 
     def train_dataloader(self):
-        return DataLoader(self.mnist_train, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.train_set, batch_size=self.batch_size, num_workers=self.num_workers)
 
     def val_dataloader(self):
-        return DataLoader(self.mnist_test, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.eval_set, batch_size=self.batch_size, num_workers=self.num_workers)
 
     def test_dataloader(self):
-        return DataLoader(self.mnist_test, batch_size=self.batch_size, num_workers=self.num_workers)
+        return DataLoader(self.test_set, batch_size=self.batch_size, num_workers=self.num_workers)
 
+    #Lightning 2.x has a LightningCLI object now, will need to investigate.
     @staticmethod
     def add_model_specific_args(parent_parser, root_dir):  # pragma: no-cover
-        """
-        Define parameters that only apply to this model
-        """
+        """ Define parameters that only apply to this model """
         parser = ArgumentParser(parents=[parent_parser])
 
         # param overwrites
@@ -171,9 +173,6 @@ class ReloraModule(LightningModule):
 
         parser.add_argument('--learning_rate', default=0.001, type=float)
         parser.add_argument('--num_workers', default=4, type=int)
-
-        # data
-        parser.add_argument('--data_root', default=os.path.join(root_dir, 'mnist'), type=str)
 
         # training params (opt)
         parser.add_argument('--epochs', default=20, type=int)
@@ -198,7 +197,7 @@ class ReloraModule(LightningModule):
     def reset_optimizer(self, optimizer):
         """This was part of the trainer originally, references may need to be changed, since we now only has have
         access to the wrapper and the initial training args"""
-        self.logger.info("Resetting optimizer states to zeros")
+        self.log.info("Resetting optimizer states to zeros")
 
         #This assumes that optimizer is not wrapped by accelerator
         for group in optimizer.param_groups:

@@ -15,6 +15,6 @@ Lightning attempts to expose the things you need access to, while keeping the ge
 
 - [x] Scaffolding
 - [ ] Integration
-- [ ] Example Model/Base Model
+- [x] Example Model/Base Model
 - [ ] Testing
 - [ ] Complete
