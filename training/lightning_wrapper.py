@@ -38,7 +38,7 @@ class ReloraModule(L.LightningModule):
         # Datasets
         self.train_set = train_dataset
         self.eval_set = eval_dataset
-
+        
         # Misc Arguements
         self.num_workers = num_workers
         self.batch_size = batch_size
@@ -97,7 +97,7 @@ class ReloraModule(L.LightningModule):
         self.model = get_peft_model(self.model, self.config)
 
     def reset_optimizer(self):
-        """Implements only the """
+        """Implements only the reset portion of the paper's Optimizer handler"""
 
         for group in self.trainer.optimizers[0].param_groups:
             for p in group["params"]:
