@@ -14,7 +14,8 @@ Lightning attempts to expose the things you need access to, while keeping the ge
 ### TO-DO:
 
 - [x] Scaffolding
-- [ ] Integration
+- [x] Integration
 - [x] Example Model/Base Model
 - [ ] Testing
+- [ ] CLI
 - [ ] Complete
