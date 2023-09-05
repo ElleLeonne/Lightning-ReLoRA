@@ -16,7 +16,7 @@ Classification model works properly. Cold LR warmup not yet implemented, but opt
 
 The original paper advises that you pretrain a base model as normal for some number of epochs or steps, prior to using ReLoRA for the rest of pretraining.
 
-The final lora layer will be incompatible with the final model output.
+The final lora layer will be incompatible with the final model output (as the final model is a merged version of that very layer).
 
 Use float32, bf16-mixed, int8, or gptq-4. Avoid 16-mixed for the time being.
 
