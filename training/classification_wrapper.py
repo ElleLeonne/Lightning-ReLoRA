@@ -46,36 +46,36 @@ class ReloraModule(L.LightningModule):
         if stage == 'fit' and self.config is not None:
             self.load_model(self.model_path)
             self.init_lora()
-            #May need to move prepare_model_for_8bit_training here, too.
 
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, input_dc, batch_idx):
+    def training_step(self, batch, batch_idx):
         """ Lightning calls this inside the training loop with the data from the training dataloader passed in as `batch`. """
-        input_dc = self(input_dc)
-        logits = input_dc.hidden_state[:, -1, :]
-        labels = input_dc.labels
+        output = self(batch)
+        logits = output["hidden_state"][:, -1, :]
+        labels = output["labels"]
 
         loss = self.loss(logits, torch.tensor(labels, device=logits.device))
-        preds = torch.argmax(logits).item()
-        accuracy = 0.0 if preds != labels else 1.0 # Needs a minor tweak to handle batches
+        preds = torch.argmax(logits, dim=-1)
+
+        accuracy = (preds == labels).float().sum() / len(labels)
         self.log("train_loss", loss, batch_size=self.batch_size, on_step=True, on_epoch=True)
         self.log("train_accuracy", accuracy, batch_size=self.batch_size, on_step=True, on_epoch=True)
         return loss
 
-    def validation_step(self, input_dc, batch_idx):
+    def validation_step(self, batch, batch_idx):
         """ Lightning calls this inside the validation loop with the data from the validation dataloader passed in as `batch`. """
-        input_dc = self(input_dc)
-        logits = input_dc.hidden_state[:, -1, :]
-        labels = input_dc.labels
+        output = self(batch)
+        logits = output["hidden_state"][:, -1, :]
+        labels = output["labels"]
 
         val_loss = self.loss(logits, torch.tensor(labels, device=logits.device))
-        preds = torch.argmax(logits).item()
-        accuracy = 0.0 if preds != labels else 1.0 # Needs a minor tweak to handle batches
+        preds = torch.argmax(logits, dim=-1)
+        accuracy = (preds == labels).float().sum() / len(labels)
+        
         self.log("val_loss", val_loss, batch_size=self.batch_size, on_step=False, on_epoch=True)
         self.log("val_accuracy", accuracy, batch_size=self.batch_size, on_step=False, on_epoch=True)
-
         return val_loss, accuracy
 
     # ---------------------
@@ -101,15 +101,15 @@ class ReloraModule(L.LightningModule):
         lora_path = f"{self.model_path}_lora"
         self.model.save_pretrained(lora_path) # Save lora weights
         del self.model # We do this outright to avoid transitional memory spaces. Merging requires a LOT of memory, so we favor the CPU.
-        model = self.model_class.from_pretrained(self.model_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision) # Load in higher precision
+        model = self.model_class.from_pretrained(self.model_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision) # Load in higher precision if able
 
         #first_weight = model.model.layers[0].self_attn.q_proj.weight #Llama has nested model attributes.
-        og_weight = model.cv_head.layers[0].self_attn.q_proj.weight
+        og_weight = model.classification_head.layers[0].self_attn.q_proj.weight
 
         model = PeftModel.from_pretrained(model, lora_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision)
         model.merge_and_unload() # Load and merge lora
 
-        new_weight = model.cv_head.layers[0].self_attn.q_proj.weight
+        new_weight = model.classification_head.layers[0].self_attn.q_proj.weight
         assert torch.allclose(og_weight, new_weight) # Check to ensure the weights actually changed.
         del og_weight, new_weight # Deleting them, because they're big.
 
@@ -117,9 +117,10 @@ class ReloraModule(L.LightningModule):
         del model
 
     def load_model(self, path):
-        self.model = self.model_class.from_pretrained(path, load_in_8bit=True)
+        self.model = self.model_class.from_pretrained(path, load_in_8bit=True, torch_dtype=self.load_precision)
 
     def init_lora(self):
+        """I was getting errors using peft's prepare_model_for_kbit_training feature. For now, just include RMSNorm in modules_to_save"""
         self.model = get_peft_model(self.model, self.config)
 
     def reset_optimizer(self):
