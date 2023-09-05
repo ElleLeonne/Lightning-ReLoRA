@@ -1,5 +1,5 @@
 # Lightning-ReLoRA
-A public implementation of the ReLoRA pretraining method, built on Lightning-AI's Pytorch Lightning suite.
+A public implementation of the ReLoRA pretraining method (https://github.com/Guitaricet/relora), built on Lightning-AI's Pytorch Lightning suite.
 
 This repository is stil under construction.
 
@@ -11,11 +11,21 @@ The Trainer is more closed, and handles things like ddp, training parameters, lo
 
 Lightning attempts to expose the things you need access to, while keeping the general boilerplate hidden, and your functional code succinct.
 
+### Dev Notes
+Classification model works properly. Cold LR warmup not yet implemented, but optimizer reset works, which is the most important feature.
+
+The original paper advises that you pretrain a base model as normal for some number of epochs or steps, prior to using ReLoRA for the rest of pretraining.
+
+The final lora layer will be incompatible with the final model output.
+
+Use float32, bf16-mixed, int8, or gptq-4. Avoid 16-mixed for the time being.
+
 ### TO-DO:
 
 - [x] Scaffolding
 - [x] Integration
 - [x] Example Model/Base Model
-- [ ] Testing
+- [x] Testing - Classification
+- [ ] Testing - Language Model
 - [ ] CLI
 - [ ] Complete
