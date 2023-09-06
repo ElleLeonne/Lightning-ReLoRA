@@ -1,10 +1,8 @@
-# Lightning-ReLoRA
-A public implementation of the ReLoRA pretraining method, built on Lightning-AI's Pytorch Lightning suite.
+# Lightning-ReLoRA 
+A public implementation of the ReLoRA pretraining method, built on Lightning-AI's Pytorch Lightning suite. This repository is stil under construction.
 > https://arxiv.org/abs/2307.05695
 > 
 > https://github.com/Guitaricet/relora/tree/main
-
-This repository is stil under construction.
 
 Pytorch Lightning splits training into two modules, the Lightning Wrapper, and the Lightning Trainer, to hide the boilerplat you don't need, while exposing the loop methods you do need.
 
