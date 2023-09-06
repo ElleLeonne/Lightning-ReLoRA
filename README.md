@@ -1,6 +1,7 @@
 # Lightning-ReLoRA
 A public implementation of the ReLoRA pretraining method, built on Lightning-AI's Pytorch Lightning suite.
 > https://arxiv.org/abs/2307.05695
+> 
 > https://github.com/Guitaricet/relora/tree/main
 
 This repository is stil under construction.
