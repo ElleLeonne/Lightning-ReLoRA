@@ -107,7 +107,7 @@ class ReloraModule(L.LightningModule):
         og_weight = model.classification_head.layers[0].self_attn.q_proj.weight
 
         model = PeftModel.from_pretrained(model, lora_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision)
-        model.merge_and_unload() # Load and merge lora
+        model = model.merge_and_unload() # Load and merge lora
 
         new_weight = model.classification_head.layers[0].self_attn.q_proj.weight
         assert torch.allclose(og_weight, new_weight) # Check to ensure the weights actually changed.
