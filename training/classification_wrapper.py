@@ -92,26 +92,22 @@ class ReloraModule(L.LightningModule):
 
     def val_dataloader(self):
         return self.eval_set
- 
+
     # ---------------------
     # RELORA METHODS
-    # ---------------------
-    def set_lora_config(self, **kwargs):
-        """Basic method to set LoRA config from outside instance initiation."""
-        self.config = LoraConfig(**kwargs)
-        return self.config
-    
+    # ---------------------    
     def merge_lora_weights_8bit(self):
         """We can't currently merge lora weights while the model is loaded in 8bit mode, so we have to dance a little."""
-        lora_path = f"{self.save_path}_lora"
+        lora_path = f"{self.model_path}_lora"
         self.model.save_pretrained(lora_path) # Save lora weights
         del self.model # We do this outright to avoid transitional memory spaces. Merging requires a LOT of memory, so we favor the CPU.
-        model = self.model_class.from_pretrained(self.save_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision) # Load in higher precision
+        model = self.model_class.from_pretrained(self.model_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision) # Load in higher precision if able
 
         #first_weight = model.model.layers[0].self_attn.q_proj.weight #Llama has nested model attributes.
         og_weight = model.classification_head.layers[0].self_attn.q_proj.weight
 
         model = PeftModel.from_pretrained(model, lora_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision)
+
         self.model = model.merge_and_unload() # Load and merge lora
 
         new_weight = self.model.classification_head.layers[0].self_attn.q_proj.weight
