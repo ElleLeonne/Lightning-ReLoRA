@@ -107,30 +107,42 @@ class ReloraModule(L.LightningModule):
         og_weight = model.classification_head.layers[0].self_attn.q_proj.weight
 
         model = PeftModel.from_pretrained(model, lora_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision)
-        model = model.merge_and_unload() # Load and merge lora
 
-        new_weight = model.classification_head.layers[0].self_attn.q_proj.weight
+        self.model = model.merge_and_unload() # Load and merge lora
+
+        new_weight = self.model.classification_head.layers[0].self_attn.q_proj.weight
+        assert torch.allclose(og_weight, new_weight) # Check to ensure the weights actually changed.
+        del og_weight, new_weight, model # Deleting them, because they're big.
+
+    def merge_lora_weights(self):
+        """ We should strip the merge check prior to full release, to ensure modularity. """
+        og_weight = self.classification_head.layers[0].self_attn.q_proj.weight
+        self.model = self.model.to(dtype=self.merge_precision)
+        self.model = self.model.merge_and_unload() # merge lora
+        self.model = self.model.to(dtype=self.load_precision)
+        new_weight = self.model.classification_head.layers[0].self_attn.q_proj.weight
         assert torch.allclose(og_weight, new_weight) # Check to ensure the weights actually changed.
         del og_weight, new_weight # Deleting them, because they're big.
-
-        model.save_pretrained(self.save_path, max_shard_size="2GB")
-        del model
 
     def load_model(self, path):
         self.model = self.model_class.from_pretrained(path, load_in_8bit=True, torch_dtype=self.load_precision)
 
     def init_lora(self):
-        """I was getting errors using peft's prepare_model_for_kbit_training feature. For now, just include RMSNorm in modules_to_save"""
+        self.model = prepare_model_for_kbit_training(self.model)
         self.model = get_peft_model(self.model, self.config)
 
-    def reset_optimizer(self):
-        """This was part of the trainer originally, references may need to be changed, since we now only has have
-        access to the wrapper and the initial training args"""
-        for group in self.trainer.optimizers[0].param_groups:
-            for p in group["params"]:
-                param_state = self.trainer.optimizers[0].state[p]
-                param_state["exp_avg"] = torch.zeros_like(p.data)
-                param_state["exp_avg_sq"] = torch.zeros_like(p.data)
+    def reset_optimizer(self, in_place=False):
+        """ The ReLoRA optimizer reset method. """
+        for optimizer in self.trainer.optimizers:
+            for group in optimizer.param_groups:
+                for p in group["params"]:
+                    param_state = optimizer.state[p]
+                    if in_place is False:
+                        param_state["exp_avg"] = torch.zeros_like(p.data)
+                        param_state["exp_avg_sq"] = torch.zeros_like(p.data)
+                    else:
+                        param_state["exp_avg"].zero_()
+                        param_state["exp_avg_sq"].zero_()
 
     def seed_scaler(self):
         """ In mixed precision training, messing with the model or the optimizer results in the scaler receiving an out-of-sequence .update() method.
@@ -142,11 +154,8 @@ class ReloraModule(L.LightningModule):
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Handles checkpoint logic"""
         self.reset_optimizer()
-        self.merge_lora_weights_8bit()
-        self.load_model(self.save_path)
+        self.merge_lora_weights_8bit() if self.trainer.precision == "int8" else self.merge_lora_weights()
         checkpoint['state_dict'] = self.model.state_dict()  #We want to make sure we're not saving the LoRA state dict
-        self.reset_optimizer()
+        self.reset_optimizer(in_place=True) if self.trainer.scaler is not None else self.reset_optimizer()            
         self.init_lora()
-        if self.trainer.scaler is not None:
-            self.seed_scaler() # Patch for mixed precision. Not quite ready. Please use float32, bf16-mixed, int8, or gptq4 in the mean-time.
         return checkpoint
