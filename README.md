@@ -6,16 +6,17 @@ A public implementation of the ReLoRA pretraining method, built on Lightning-AI'
 
 This repository is stil under construction.
 
-Pytorch Lightning splits training into two modules, the Lightning Wrapper, and the Lightning Trainer.
+Pytorch Lightning splits training into two modules, the Lightning Wrapper, and the Lightning Trainer, to hide the boilerplat you don't need, while exposing the loop methods you do need.
 
-The Lightning Wrapper wraps your model inside of a Lightning Object, which handles basic training methods, allowing you to edit them freely.
+ReLoRA is a pretraining method designed around reducing the costs, compute, and time required to pretrain or finetune AI models by leveraging Low Rank Adapters that can be merged into the model weights at a later time.
 
-The Trainer is more closed, and handles things like ddp, training parameters, loop logic, and others.
-
-Lightning attempts to expose the things you need access to, while keeping the general boilerplate hidden, and your functional code succinct.
+We attempt to _even further_ optimize this speed and efficiency bonus by supporting Int8 and GPTQ4 quantization methods during pretraining, allowing you to pretrain massive AI models on consumer grade hardware.
 
 ### Dev Notes
+
 Classification model works properly. Cold LR warmup not yet implemented, but optimizer reset works, which is the most important feature.
+
+LoRA layers are very sensitive to overfitting. Be gentle when training, and experiment with hyperparameters (especially dropout and learning rate).
 
 The original paper advises that you pretrain a base model as normal for some number of epochs or steps, prior to using ReLoRA for the rest of pretraining.
 
