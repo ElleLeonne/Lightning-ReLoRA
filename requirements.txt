@@ -1,7 +1,7 @@
 torch
 lightning
 transformers
-peft
+git+https://github.com/huggingface/peft.git
 accelerate
 bitsandbytes
 sentencepiece
