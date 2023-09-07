@@ -1,4 +1,5 @@
 torch
+datasets
 lightning
 transformers
 git+https://github.com/huggingface/peft.git
