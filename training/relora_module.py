@@ -4,8 +4,8 @@ import torch.nn as nn
 import lightning as L
 from torch import optim
 from typing import Dict, Any
-from torch.nn import CrossEntropyLoss
 from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
+import shutil
 
 class ReloraModule(L.LightningModule):
     """ Relora base class for inheritance. """
@@ -42,9 +42,9 @@ class ReloraModule(L.LightningModule):
         
         # LoRA settings
         self.config = lora_config
-        self.merge_precision = torch.float32 # If your CPU can actually handle it, I strongly advise using float32.
+        self.merge_precision = torch.float16 # If your CPU can actually handle it, I strongly advise using float32.
         self.load_precision = torch.float16 # Peft will cast this to float16 on its own, anyways
-        self.has_merged = False
+        self.has_merged = False # A flag to ensure our very first model reload comes from the original source.
 
     # ---------------------
     # TRAINING SETUP
@@ -60,7 +60,7 @@ class ReloraModule(L.LightningModule):
         """ Return whatever optimizers and learning rate schedulers you want here. At least one optimizer is required. """
         optimizer = optim.AdamW(self.parameters(), lr=self.learning_rate)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, self.trainer.max_epochs)
-        return [optimizer], [scheduler]
+        return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
 
     def train_dataloader(self):
         """Reinitialization logic"""
@@ -77,39 +77,19 @@ class ReloraModule(L.LightningModule):
     # ---------------------
     # RELORA METHODS
     # ---------------------
-    def set_lora_config(self, **kwargs):
-        """Basic method to set LoRA config from outside instance initiation."""
-        self.config = LoraConfig(**kwargs)
-        return self.config
-    
-    def merge_lora_weights_8bit(self):
-        """We can't currently merge lora weights while the model is loaded in 8bit mode, so we have to dance a little."""
-        # Save variables
-        model_path = self.model_path if self.has_merged is False else self.save_path
-        lora_path = f"{self.save_path}_lora"
-        self.has_merged = True
-
-        self.model.save_pretrained(lora_path) # Save lora weights
-        del self.model # We do this outright to avoid transitional memory spaces. Merging requires a LOT of memory, so we favor the CPU.
-        model = self.model_class.from_pretrained(model_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision) # Load in higher precision if able
-        model = PeftModel.from_pretrained(model, lora_path, device_map={"": "cpu"}, torch_dtype=self.merge_precision)
-        model = model.merge_and_unload() # Load and merge lora
-        model.save_pretrained(self.save_path, max_shard_size="2GB")
-        del model
-        self.load_model(self.save_path)
-
     def merge_lora_weights(self):
-        # Pulling out casting until I have a chance to test it more.
-        #self.model = self.model.to(dtype=self.merge_precision)
+        """ Merges lora weights. Requires the current 0.6.0dev peft branch to work properly. """
         self.model = self.model.merge_and_unload() # merge lora
-        #self.model = self.model.to(dtype=self.load_precision)
 
     def load_model(self, path):
-        self.model = self.model_class.from_pretrained(path, load_in_8bit=True, torch_dtype=self.load_precision)
+        self.model = self.model_class.from_pretrained(path, load_in_8bit=True if self.trainer.precision == "int8" else False, torch_dtype=self.load_precision)
 
     def init_lora(self):
         self.model = prepare_model_for_kbit_training(self.model)
         self.model = get_peft_model(self.model, self.config)
+        for name, param in self.model.named_parameters(): # Non-layer weights need to have training turned on.
+            if any(substring in name for substring in ["norm", "bias", "lora_"]):
+                param.requires_grad = True
 
     def reset_optimizer(self, in_place=False):
         """ The ReLoRA optimizer reset method. """
@@ -124,19 +104,12 @@ class ReloraModule(L.LightningModule):
                         param_state["exp_avg"].zero_()
                         param_state["exp_avg_sq"].zero_()
 
-    def seed_scaler(self):
-        """ In mixed precision training, messing with the model or the optimizer results in the scaler receiving an out-of-sequence .update() method.
-        Until this is working properly, I highly recommend using either float32, bf16-mixed, or int8 training. Do not use 16-mixed. """
-        device_list = [p.device for p in self.parameters()]
-        self.trainer.scaler._per_optimizer_states[id(self.trainer.optimizers)]["found_inf_per_device"] = {device: torch.tensor([0.0]) for device in device_list}
-        #print({opt: state["found_inf_per_device"] for opt, state in self.trainer.scaler._per_optimizer_states.items()})
-
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Handles checkpoint logic"""
         if self.config is not None: # This is our flag to see if we're using the ReLoRA training method.
             self.reset_optimizer()
-            self.merge_lora_weights_8bit() if self.trainer.precision == "int8" else self.merge_lora_weights()
-            checkpoint['state_dict'] = self.model.state_dict()  #We want to make sure we're not saving the LoRA state dict
+            self.merge_lora_weights
+            checkpoint["state_dict"] = self.model.state_dict()  #We want to make sure we're not saving the LoRA state dict
             self.reset_optimizer(in_place=True) if self.trainer.scaler is not None else self.reset_optimizer()    
             self.init_lora()
         return checkpoint
