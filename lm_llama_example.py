@@ -9,6 +9,11 @@ from peft import LoraConfig
 from training.plugins import Int8Precision
 from training.training_modules import ReloraModuleForLM
 
+"""
+Note: this example is incomplete.
+Please use the classification example if you're not interested in cleaning up the code yourself.
+"""
+
 # ---------------
 # Training Params
 # ---------------

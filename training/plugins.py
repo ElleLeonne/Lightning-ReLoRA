@@ -1,6 +1,7 @@
 from torch.nn import Module
 from torch.optim import Optimizer
 from lightning.pytorch.plugins.precision import PrecisionPlugin
+from typing import List, Tuple, Any
 
 class Int8Precision(PrecisionPlugin):
   """This exists only to stop Lightning from attempting to use its own precision settings"""
