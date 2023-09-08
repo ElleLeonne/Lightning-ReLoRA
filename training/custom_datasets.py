@@ -23,7 +23,7 @@ class BasicImageDataset(BasicDataset):
     def __init__(self, dataset, length = None, shards: int = 1):
         super().__init__(dataset, length, shards)
         self.to_tensor = ToTensor()
-        self.resize_dims = (512, 512)
+        self.resize_dims = (224, 224)
 
     def preprocess(self, image):
         image = image.convert("RGB")

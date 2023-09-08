@@ -3,9 +3,12 @@ import torch
 import torch.nn as nn
 import lightning as L
 from torch import optim
+from torch.utils.data import DataLoader
 from typing import Dict, Any
-from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
-import shutil
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from .utils import create_module_lists, get_weight_names
+
+peft_supported_layers = [""]
 
 class ReloraModule(L.LightningModule):
     """ Relora base class for inheritance. """
@@ -13,11 +16,12 @@ class ReloraModule(L.LightningModule):
                  model_class: nn.Module,
                  model_path: str,
                  lora_config: LoraConfig = None,
+                 lora_merge_freq: int = 0,
                  train_dataset: Any = None,
                  eval_dataset: Any = None,
                  batch_size: int = 1,
                  learning_rate: float = 3e-4,
-                 num_workers: int = 1,
+                 num_workers: int = 4,
                  **kwargs):
         
         super().__init__()
@@ -31,6 +35,8 @@ class ReloraModule(L.LightningModule):
 
         # Training and optimization
         self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.workers = num_workers
 
         # Datasets
         self.train_set = train_dataset
@@ -42,9 +48,10 @@ class ReloraModule(L.LightningModule):
         
         # LoRA settings
         self.config = lora_config
-        self.merge_precision = torch.float16 # If your CPU can actually handle it, I strongly advise using float32.
-        self.load_precision = torch.float16 # Peft will cast this to float16 on its own, anyways
-        self.has_merged = False # A flag to ensure our very first model reload comes from the original source.
+        self.merge_freq = lora_merge_freq
+        self.merge_precision = torch.float32 # A variable for future tests. Unused right now.
+        self.load_precision = torch.float16 # Peft will cast this to float16 on its own, anyways.
+        self.train_all_params = True # Whether to automatically set training mode on all non-LoRA weights or not.
 
     # ---------------------
     # TRAINING SETUP
@@ -53,7 +60,12 @@ class ReloraModule(L.LightningModule):
         """Called before trainer.fit() and trainer.eval()"""
         if stage == 'fit':
             self.load_model(self.model_path)
-            if self.config is not None: # We use this as our ReLoRA flag.
+            if self.merge_freq > 0: # We use this as our ReLoRA flag.
+                if self.config.target_modules is None: # Whether to automatically generate all valid target modules
+                    self.config.target_modules, self.base_modules = create_module_lists(self.model, "lora")
+                else: # Or to just stick with figuring out the non-LoRA layers
+                    self.base_modules = [item for item in get_weight_names() if item not in self.config.target_modules]
+                self.base_modules += ["lora_"]
                 self.init_lora()
     
     def configure_optimizers(self):
@@ -63,13 +75,10 @@ class ReloraModule(L.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "interval": "step"}}
 
     def train_dataloader(self):
-        """Reinitialization logic"""
-        self.train_set.dataset.initialize_dataset()
-        return self.train_set
+        return DataLoader(self.train_set, batch_size=self.batch_size, num_workers=self.workers)
 
     def val_dataloader(self):
-        self.eval_set.dataset.initialize_dataset()
-        return self.eval_set
+        return DataLoader(self.eval_set, batch_size=self.batch_size, num_workers=self.workers)
 
     def forward(self, x):
         return self.model(x)
@@ -77,6 +86,9 @@ class ReloraModule(L.LightningModule):
     # ---------------------
     # RELORA METHODS
     # ---------------------
+
+    # Potential hooks of interest: on_train_epoch_end, 
+
     def merge_lora_weights(self):
         """ Merges lora weights. Requires the current 0.6.0dev peft branch to work properly. """
         self.model = self.model.merge_and_unload() # merge lora
@@ -85,11 +97,14 @@ class ReloraModule(L.LightningModule):
         self.model = self.model_class.from_pretrained(path, load_in_8bit=True if self.trainer.precision == "int8" else False, torch_dtype=self.load_precision)
 
     def init_lora(self):
+        """Loads LoRA layer, and optionally turns training mode on for all other layers."""
         self.model = prepare_model_for_kbit_training(self.model)
         self.model = get_peft_model(self.model, self.config)
-        for name, param in self.model.named_parameters(): # Non-layer weights need to have training turned on.
-            if any(substring in name for substring in ["norm", "bias", "lora_"]):
-                param.requires_grad = True
+        if self.train_all_params is True:
+            # Non-layer weights should have training turned on.
+            for name, param in self.model.named_parameters():
+                if any(substring in name for substring in self.base_modules): # We should probably do hard-lookups on this, to avoid slant-matches
+                    param.requires_grad = True
 
     def reset_optimizer(self, in_place=False):
         """ The ReLoRA optimizer reset method. """
@@ -103,10 +118,15 @@ class ReloraModule(L.LightningModule):
                     else:
                         param_state["exp_avg"].zero_()
                         param_state["exp_avg_sq"].zero_()
+    
+    """def on_train_epoch_end(self):
+        # Future site of defining how often to merge LoRA layers.
+        if self.merge_freq > 0:
+            self.current_epoch"""
 
     def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
         """Handles checkpoint logic"""
-        if self.config is not None: # This is our flag to see if we're using the ReLoRA training method.
+        if self.merge_freq > 0: # This is our flag to see if we're using the ReLoRA training method.
             self.reset_optimizer()
             self.merge_lora_weights
             checkpoint["state_dict"] = self.model.state_dict()  #We want to make sure we're not saving the LoRA state dict

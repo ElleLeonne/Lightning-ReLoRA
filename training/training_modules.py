@@ -1,6 +1,6 @@
 import torch
 from torch.nn import CrossEntropyLoss
-from relora_module import ReloraModule
+from .relora_module import ReloraModule
 
 class ReloraModuleForLM(ReloraModule):
     """ Relora module for language modeling, or other tasks without defined accuracy metrics. """
@@ -18,9 +18,9 @@ class ReloraModuleForLM(ReloraModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        output = self(batch)
+        output = self(batch["image"])
         logits = output["logits"][:, -1, :]
-        labels = output["labels"]
+        labels = batch["labels"]
 
         val_loss = self.loss(logits, labels)
         self.log("val_loss", val_loss, batch_size=self.batch_size, on_step=False, on_epoch=True)
@@ -33,10 +33,11 @@ class ReloraModuleForClassification(ReloraModule):
         self.loss = CrossEntropyLoss()
 
     def training_step(self, batch, batch_idx):
-        output = self(batch)
-        logits = output["logits"][:, -1, :]
-        labels = output["labels"]
+        output = self(batch["image"])
+        logits = output.logits
+        labels = batch["label"]
 
+        print(logits.shape)
         loss = self.loss(logits, labels)
         preds = torch.argmax(logits, dim=-1)
 
@@ -46,10 +47,11 @@ class ReloraModuleForClassification(ReloraModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        output = self(batch)
-        logits = output["logits"][:, -1, :]
-        labels = output["labels"]
+        output = self(batch["image"])
+        logits = output.logits
+        labels = batch["label"]
 
+        print(logits.shape)
         val_loss = self.loss(logits, labels)
         preds = torch.argmax(logits, dim=-1)
 
