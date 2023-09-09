@@ -1,16 +1,12 @@
 import torch
-from torch.nn import Module
-from torch.utils.data import DataLoader
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
-from peft import LoraConfig
-from datasets import load_dataset
-from training.custom_datasets import BasicImageDataset
-
 from transformers import ViTForImageClassification
-
-from training.training_modules import ReloraModuleForClassification
+from datasets import load_dataset
+from peft import LoraConfig
 from training.plugins import Int8Precision
+from training.custom_datasets import BasicImageDataset
+from training.training_modules import ReloraModuleForClassification
 
 # --------------------
 # Project Parameters
@@ -40,7 +36,7 @@ def main():
 
     # Model init
     model_class = ViTForImageClassification
-    model_path = 'google/vit-base-patch16-224'
+    model_path = "google/vit-base-patch16-224"
     lora_config = LoraConfig(r=8, lora_alpha=16, lora_dropout=0.1, bias="none", inference_mode=False)
     # If you choose not supply target_modules, the module will automatically apply lora to every possible compatible layer.
 

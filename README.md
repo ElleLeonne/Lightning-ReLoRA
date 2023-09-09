@@ -25,9 +25,11 @@ Use float32, bf16-mixed, int8, or gptq-4. Avoid 16-mixed for the time being.
 ### TO-DO:
 
 - [x] Scaffolding
-- [x] Integration
+- [x] Integration - LoRA / ReLoRA / Int8
+- [ ] Integration - GPTQ / 4bit
 - [x] Example Model/Base Model
 - [x] Testing - Classification
 - [ ] Testing - Language Model
 - [ ] CLI
+- [ ] Testing - Training Parameter Tuning
 - [ ] Complete

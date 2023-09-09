@@ -1,0 +1,8 @@
+# Ignore Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+
+# Other generated state folders
+lightning_logs/
+relora_checkpoints/

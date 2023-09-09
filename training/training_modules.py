@@ -18,7 +18,8 @@ class ReloraModuleForLM(ReloraModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        output = self(batch["image"])
+        print(batch)
+        output = self(batch["text"])
         logits = output["logits"][:, -1, :]
         labels = batch["labels"]
 
