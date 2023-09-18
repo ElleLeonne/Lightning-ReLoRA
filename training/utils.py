@@ -5,6 +5,20 @@ from functools import reduce
 # Currently only supports lora adapters. More to come, hopefully.
 adapter_types = ["lora"]
 
+class Accuracy():
+    def __init__(self):
+        self.avg = 0
+        self.reset()
+    @property
+    def accuracy(self):
+        return self.avg
+    def reset(self):
+        self.count = 0
+    def __call__(self, value):
+        self.count += 1
+        self.avg = (self.count * self.avg + value) / self.count
+        return self.avg
+
 def get_compatible_module_type(adapter_type: adapter_types):
     """ Returns a list of all compatible adapter layer types, to facillitate automatic module construction. """
     if adapter_type == "lora":
