@@ -1,12 +1,18 @@
 import torch
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.callbacks import LearningRateMonitor
 from transformers import ViTForImageClassification
 from datasets import load_dataset
 from peft import LoraConfig
 from training.plugins import Int8Precision
 from training.custom_datasets import BasicImageDataset
 from training.training_modules import ReloraModuleForClassification
+
+"""
+Although this file is functional, the intent is move most of its contents into a new training module class, in keeping with Lightning's dev ethos.
+Ultimately, I'll slowly begin converting this to a unit-testing module.
+"""
 
 # --------------------
 # Project Parameters
@@ -32,7 +38,7 @@ torch.set_float32_matmul_precision("medium")
 def main():
     # Dataset preperations
     train_set = BasicImageDataset(load_dataset(path="imagenet-1k", split="train"), length=1281167, shards=dataset_shards)
-    val_set = BasicImageDataset(load_dataset(path="imagenet-1k", split="validation"), length=100000, shards=dataset_shards//10)
+    val_set = BasicImageDataset(load_dataset(path="imagenet-1k", split="validation"), length=50000, shards=dataset_shards//10)
 
     # Model init
     model_class = ViTForImageClassification
@@ -53,14 +59,17 @@ def main():
     train_steps = max_steps if dev_mode is False else 10
     val_steps = max_val_steps if dev_mode is False else 5
     epochs = max_epochs if dev_mode is False else 5
+    log_steps = 5000 if dev_mode is False else 2
     lora_config = lora_config if use_lora is True else None
     epoch_merge_freq = lora_merge_epochs if use_lora is True else 0
+
 
     # --- Run ---
     model = ReloraModuleForClassification(model_class=model_class, model_path=model_path, lora_config=lora_config, lora_merge_freq=epoch_merge_freq,
                                           train_dataset=train_set, eval_dataset=val_set, learning_rate=learning_rate)
-    trainer = L.Trainer(max_epochs=epochs, precision=precision,logger=logger, val_check_interval=1.0, log_every_n_steps=5000,
-                        limit_train_batches=train_steps, limit_val_batches=val_steps, plugins=plugins, reload_dataloaders_every_n_epochs=1)
+    trainer = L.Trainer(max_epochs=epochs, precision=precision,logger=logger, val_check_interval=1.0, log_every_n_steps=log_steps, 
+                        limit_train_batches=train_steps, limit_val_batches=val_steps, reload_dataloaders_every_n_epochs=1,
+                        callbacks=[LearningRateMonitor("step")], plugins=plugins,)
     trainer.fit(model)
 
 if __name__ == "__main__":
