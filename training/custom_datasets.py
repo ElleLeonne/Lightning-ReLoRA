@@ -69,23 +69,32 @@ class BasicImageDataset(BasicDataset):
         return [self.preprocess(self.dataset[index]["image"]) for index in indexes]
 
 class BasicLMDataset(BasicDataset):
-    def __init__(self, dataset, tokenizer=None, length = None, shards: int = 1, eos_default_index = 0):
+    def __init__(self, dataset,
+                       tokenizer=None,
+                       length = None,
+                       shards: int = 1,
+                       tokenize_list = False,
+                       eos_default_index = 0):
         """ -args:
         
         -- dataset: A pytorch or huggingface dataset object.
         -- tokenizer: Pass a tokenizer if you want to tokenize during preprocessing, otherwise leave as None.
         -- length: We attempt to calculate the length automatically, but providing it can be much faster.
         -- shards: How many shards to split the dataset into, to avoid memory overflow.
+        -- tokenize_list: Some tokenizers (those that break w/ multiprocessing) are designed to iterate over lists (batches) automatically.
         -- eos_default_index: _(Only) if you don't include labels_, we will first check tokenizer.eos_token for your end_of_sequence token before using this to produce them.
         """
         super().__init__(dataset, length, shards)
         self.tokenizer = tokenizer  # Provides further room for scaffolding, if other configurations are required.
         self.eos_token = tokenizer.eos_token if (self.tokenizer is not None and hasattr(tokenizer, "eos_token")) else eos_default_index 
+        self.tokenize_list = tokenize_list
 
     def preprocess(self, txt: str):
         """ Tokenizes text, and returns a numpy array. Todo: Support returning pytorch tensors. """
-        print(txt)
         return self.tokenizer.tokenize(txt).astype(np.int32) if self.tokenizer is not None else txt
+    def preprocess_list(self, input_list):
+        return [[x.astype(np.int32) for x in x_list]
+                for x_list in self.tokenizer.tokenize(input_list)] if self.tokenizer is not None else input_list
     def __getitem__(self, index) -> np.array:
         """ Tokenizes the text, and generates simple labels if they weren't provided. Operates on a single item. """
         input_dict = filter_dict(self.dataset[index])
@@ -96,7 +105,7 @@ class BasicLMDataset(BasicDataset):
     def __getitems__(self, indexes) -> list: # This accepts a list of samples, and returns a list of numpy arrays.
         """ Tokenizes the text, and generates simple labels if they weren't provided. Operates on a batch of items.. """
         input_dict = filter_dict(self.dataset[indexes])
-        text_list = [self.preprocess(item) for item in input_dict["text"]]
+        text_list = self.preprocess_list(input_dict["text"]) if self.tokenize_list is True else [self.preprocess(item) for item in input_dict["text"]]
         labels_list = ( [np.concatenate((txt[1:], [self.eos_token])) for txt in text_list]
                         if "labels" not in input_dict else self.preprocess(input_dict["labels"]) )
         return [{"text": text, "labels": labels} for text, labels in zip(text_list, labels_list)]
