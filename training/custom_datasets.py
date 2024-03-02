@@ -84,8 +84,8 @@ class BasicLMDataset(BasicDataset):
 
     def preprocess(self, txt: str):
         """ Tokenizes text, and returns a numpy array. Todo: Support returning pytorch tensors. """
+        print(txt)
         return self.tokenizer.tokenize(txt).astype(np.int32) if self.tokenizer is not None else txt
-
     def __getitem__(self, index) -> np.array:
         """ Tokenizes the text, and generates simple labels if they weren't provided. Operates on a single item. """
         input_dict = filter_dict(self.dataset[index])
@@ -96,10 +96,10 @@ class BasicLMDataset(BasicDataset):
     def __getitems__(self, indexes) -> list: # This accepts a list of samples, and returns a list of numpy arrays.
         """ Tokenizes the text, and generates simple labels if they weren't provided. Operates on a batch of items.. """
         input_dict = filter_dict(self.dataset[indexes])
-        return_dict = {"text": [self.preprocess(item) for item in input_dict["text"]]}
-        return_dict["labels"] = ( [np.concatenate((txt[1:], [self.eos_token])) for txt in return_dict["text"]]
-                                 if "labels" not in input_dict else self.preprocess(input_dict["labels"]) )
-        return return_dict
+        text_list = [self.preprocess(item) for item in input_dict["text"]]
+        labels_list = ( [np.concatenate((txt[1:], [self.eos_token])) for txt in text_list]
+                        if "labels" not in input_dict else self.preprocess(input_dict["labels"]) )
+        return [{"text": text, "labels": labels} for text, labels in zip(text_list, labels_list)]
 
 # ------ Helper Functions ------
 def filter_list(list_of_dicts: list, keys_to_keep: list = ["text", "labels"]) -> list:
